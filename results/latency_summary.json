@@ -1,0 +1,74 @@
+{
+  "build_reports": [
+    {
+      "strategy": "fixed_size",
+      "n_documents": 600,
+      "n_chunks": 1210,
+      "build_ms": 516.6226029999734,
+      "languages": [
+        "bn",
+        "hi",
+        "ta",
+        "te"
+      ]
+    },
+    {
+      "strategy": "semantic_sentence_boundary",
+      "n_documents": 600,
+      "n_chunks": 937,
+      "build_ms": 207.47637099998428,
+      "languages": [
+        "bn",
+        "hi",
+        "ta",
+        "te"
+      ]
+    },
+    {
+      "strategy": "metadata_aware",
+      "n_documents": 600,
+      "n_chunks": 907,
+      "build_ms": 212.16268099999525,
+      "languages": [
+        "bn",
+        "hi",
+        "ta",
+        "te"
+      ]
+    }
+  ],
+  "latency_summary": {
+    "fixed_size": {
+      "n_queries": 248,
+      "p50_ms": 1.3359,
+      "p70_ms": 1.3759,
+      "p100_ms_max": 1.7343,
+      "mean_ms": 1.3516,
+      "pct_under_200ms": 100.0
+    },
+    "semantic_sentence_boundary": {
+      "n_queries": 248,
+      "p50_ms": 1.1386,
+      "p70_ms": 1.168,
+      "p100_ms_max": 2.4871,
+      "mean_ms": 1.1537,
+      "pct_under_200ms": 100.0
+    },
+    "metadata_aware": {
+      "n_queries": 248,
+      "p50_ms": 1.1144,
+      "p70_ms": 1.1435,
+      "p100_ms_max": 1.4471,
+      "mean_ms": 1.1307,
+      "pct_under_200ms": 100.0
+    }
+  },
+  "guardrail": {
+    "off_topic_total": 24,
+    "off_topic_correctly_rejected": 24,
+    "grounded_total": 720,
+    "grounded_correctly_answered": 720
+  },
+  "total_queries_run": 744,
+  "wall_clock_seconds": 0.923
+}
