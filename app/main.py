@@ -11,12 +11,7 @@ from pipeline import RetrievalPipeline
 from app.schemas import RetrievedChunk, PipelineInput
 from data.load_msmarco_xi import load_synthetic
 from embeddings.embedder import TfidfEmbedder
-
-# Initialize once at startup (warm up index/embedder).
-# No network access in this environment for the real MSMARCO-XI dataset or
-# SentenceTransformerEmbedder, so this mirrors demo.py's offline path:
-# synthetic data + TfidfEmbedder. build_all() must run before any /v1/chat
-# call, otherwise pipeline.query() raises KeyError (strategy not indexed).
+from dotenv import load_dotenv; load_dotenv()
 retrieval_pipeline = RetrievalPipeline(embedder=TfidfEmbedder())
 _startup_docs = load_synthetic(docs_per_language=150)
 retrieval_pipeline.build_all(_startup_docs)
@@ -48,19 +43,11 @@ class UserQueryRequest(BaseModel):
 
 @app.post("/v1/chat", response_model=PipelineOutput)
 async def chat_end_to_end(payload: UserQueryRequest):
-    # 1. Execute Retrieval via Person 2's engine.
-    # RetrievalPipeline.query() takes `text`, not `query` (see pipeline.py).
     outcome = retrieval_pipeline.query(
         text=payload.query,
         language=payload.query_language
     )
 
-    # 2. Map Person 2's Chunk dataclass to Person 3's Pydantic schema.
-    # QueryOutcome has no `.chunks`/`.latency_ms` -- the guardrail-cleared
-    # chunks are at verdict.grounded_chunks and elapsed time is total_ms.
-    # Chunk itself carries no per-chunk score (that lives on the FAISS hit
-    # tuple inside retriever.py, which QueryOutcome doesn't expose), so the
-    # single verdict.top_score is used for every grounded chunk here.
     chunks = [
         RetrievedChunk(
             chunk_id=c.chunk_id,
@@ -80,7 +67,6 @@ async def chat_end_to_end(payload: UserQueryRequest):
         retrieval_latency_ms=outcome.total_ms
     )
 
-    # 3. Generate + Ground + Record Telemetry
     result = await harness.execute_unary(pipeline_input)
     telemetry.record(result.latencies)
     return result
