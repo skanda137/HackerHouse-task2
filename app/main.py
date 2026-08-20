@@ -1,16 +1,26 @@
 import json
 import uvicorn
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from app.schemas import PipelineInput, PipelineOutput
 from app.generator import GenerationHarness
 from app.analytics import telemetry
-from pipeline import RetrievalPipeline  
+from pipeline import RetrievalPipeline
 from app.schemas import RetrievedChunk, PipelineInput
+from data.load_msmarco_xi import load_synthetic
+from embeddings.embedder import TfidfEmbedder
 
-# Initialize once at startup (warm up index/embedder)
-retrieval_pipeline = RetrievalPipeline()
+# Initialize once at startup (warm up index/embedder).
+# No network access in this environment for the real MSMARCO-XI dataset or
+# SentenceTransformerEmbedder, so this mirrors demo.py's offline path:
+# synthetic data + TfidfEmbedder. build_all() must run before any /v1/chat
+# call, otherwise pipeline.query() raises KeyError (strategy not indexed).
+retrieval_pipeline = RetrievalPipeline(embedder=TfidfEmbedder())
+_startup_docs = load_synthetic(docs_per_language=150)
+retrieval_pipeline.build_all(_startup_docs)
+
 app = FastAPI(
     title="Hacker House Goa 2026 - RAG Generation & Harness Service",
     version="1.0.0"
@@ -38,22 +48,28 @@ class UserQueryRequest(BaseModel):
 
 @app.post("/v1/chat", response_model=PipelineOutput)
 async def chat_end_to_end(payload: UserQueryRequest):
-    # 1. Execute Retrieval via Person 2's engine
-    retrieval_result = retrieval_pipeline.query(
-        query=payload.query, 
+    # 1. Execute Retrieval via Person 2's engine.
+    # RetrievalPipeline.query() takes `text`, not `query` (see pipeline.py).
+    outcome = retrieval_pipeline.query(
+        text=payload.query,
         language=payload.query_language
     )
 
-    # 2. Map Person 2's Chunk dataclass to Person 3's Pydantic schema
+    # 2. Map Person 2's Chunk dataclass to Person 3's Pydantic schema.
+    # QueryOutcome has no `.chunks`/`.latency_ms` -- the guardrail-cleared
+    # chunks are at verdict.grounded_chunks and elapsed time is total_ms.
+    # Chunk itself carries no per-chunk score (that lives on the FAISS hit
+    # tuple inside retriever.py, which QueryOutcome doesn't expose), so the
+    # single verdict.top_score is used for every grounded chunk here.
     chunks = [
         RetrievedChunk(
             chunk_id=c.chunk_id,
             text=c.text,
-            score=c.score,
+            score=outcome.verdict.top_score or 0.0,
             language=c.language,
             source=getattr(c, "source", None)
         )
-        for c in retrieval_result.chunks
+        for c in outcome.verdict.grounded_chunks
     ]
 
     pipeline_input = PipelineInput(
@@ -61,7 +77,7 @@ async def chat_end_to_end(payload: UserQueryRequest):
         query_language=payload.query_language,
         retrieved_chunks=chunks,
         stt_latency_ms=payload.stt_latency_ms,
-        retrieval_latency_ms=retrieval_result.latency_ms
+        retrieval_latency_ms=outcome.total_ms
     )
 
     # 3. Generate + Ground + Record Telemetry
