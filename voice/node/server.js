@@ -8,10 +8,11 @@ if (!apiKey) {
     process.exit(1);
 }
 
-const server = new WebSocket.Server({ port: 8080 });
+const port = process.env.PORT || 8080;
+const server = new WebSocket.Server({ port });
 
 console.log("Starting voice bridge...");
-console.log("Browser WebSocket server: ws://localhost:8080");
+console.log(`Browser WebSocket server listening on port ${port}`);
 
 server.on("connection", (browserWs) => {
     console.log("Browser connected.");

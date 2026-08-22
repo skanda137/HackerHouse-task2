@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: rag-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL_NAME
+        value: openai/gpt-oss-20b
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MIN_CALL_INTERVAL_S
+        value: "4.0"
+
+  - type: web
+    name: stt-bridge
+    runtime: node
+    rootDir: voice/node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: SARVAM_API_KEY
+        sync: false
+
+  - type: web
+    name: voice-web
+    runtime: static
+    rootDir: voice/web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_RAG_API_BASE
+        value: https://rag-api.onrender.com
+      - key: VITE_STT_WS_URL
+        value: wss://stt-bridge.onrender.com

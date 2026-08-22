@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const RAG_API_BASE = "http://localhost:8000";
-const STT_WS_URL = "ws://localhost:8080";
+const RAG_API_BASE = import.meta.env.VITE_RAG_API_BASE || "http://localhost:8000";
+const STT_WS_URL = import.meta.env.VITE_STT_WS_URL || "ws://localhost:8080";
 // server.js opens the Sarvam session with language_code=auto and forwards
 // the detected `language` field on transcript.final; this is only the
 // fallback when that field is missing or unrecognized.
