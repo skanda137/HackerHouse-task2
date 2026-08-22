@@ -9,6 +9,12 @@ all four languages, run in randomized order, with a warm-up pass excluded
 from the reported numbers (JIT/cache warm-up on the first few calls is not
 representative of steady-state latency).
 
+Runs against the real ai4bharat/MSMARCO-XI dataset (validation split, via
+load_real()) with the same max_docs_per_language the live app.main uses, so
+these numbers are directly comparable to what /v1/analytics reports for the
+same running index. Falls back to load_synthetic() -- loudly, not silently
+-- if load_real() fails (e.g. no network to huggingface.co).
+
 Usage:
     python3 -m benchmark.run_benchmark
 """
@@ -16,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import random
 import sys
@@ -24,10 +31,12 @@ from dataclasses import asdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.load_msmarco_xi import load_synthetic, SUPPORTED_LANGUAGES
+from data.load_msmarco_xi import load_real, load_synthetic, SUPPORTED_LANGUAGES
 from chunking.semantic import split_sentences
 from embeddings.embedder import TfidfEmbedder
 from pipeline import RetrievalPipeline
+
+logger = logging.getLogger("benchmark")
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -45,10 +54,15 @@ OFF_TOPIC_PROBES = [
 
 
 def build_query_set(documents, n_per_language: int = 60, seed: int = 7):
-    """Real queries = sentences pulled straight out of corpus documents
-    (so we know *something* grounded should exist for them). Off-topic
-    queries = fixed probe set, replicated across the run so the guardrail
-    gets meaningfully exercised too, not just the happy path."""
+    """Real queries: prefer each document's own paired MS MARCO query
+    (`doc.extra["query"]`, present on real ai4bharat/MSMARCO-XI data, and
+    only used off the gold/is_selected passage) so grounded queries reflect
+    MS MARCO's real, intentionally-paraphrased query-passage wording gap --
+    not a trivial "sentence lifted from the passage" shortcut, which would
+    make retrieval look artificially easy. Falls back to sentence-extraction
+    for synthetic data, which carries no paired query. Off-topic queries =
+    fixed probe set, replicated across the run so the guardrail gets
+    meaningfully exercised too, not just the happy path."""
     rng = random.Random(seed)
     by_lang = {}
     for doc in documents:
@@ -59,11 +73,17 @@ def build_query_set(documents, n_per_language: int = 60, seed: int = 7):
         docs = by_lang.get(lang, [])
         rng.shuffle(docs)
         picked = 0
+        seen_q = set()
         for doc in docs:
-            sents = split_sentences(doc.text)
-            if not sents:
-                continue
-            q = rng.choice(sents)
+            real_query = doc.extra.get("query") if doc.extra.get("is_selected") else None
+            if real_query and real_query not in seen_q:
+                q = real_query
+                seen_q.add(real_query)
+            else:
+                sents = split_sentences(doc.text)
+                if not sents:
+                    continue
+                q = rng.choice(sents)
             queries.append((q, lang, True))
             picked += 1
             if picked >= n_per_language:
@@ -84,8 +104,26 @@ def percentile(sorted_vals, p):
 
 
 def run():
-    print("=== Loading dataset (offline synthetic, MSMARCO-XI-shaped) ===")
-    documents = load_synthetic(docs_per_language=150)
+    print("=== Loading dataset (real ai4bharat/MSMARCO-XI, validation split) ===")
+    data_source = "real:ai4bharat/MSMARCO-XI:validation"
+    try:
+        # Same max_docs_per_language as app.main's live startup, so these
+        # numbers are directly comparable to what /v1/analytics reports.
+        documents = load_real(max_docs_per_language=400)
+        if not documents:
+            raise RuntimeError("load_real() returned zero documents")
+        print(f"Loaded {len(documents)} REAL documents across languages: "
+              f"{sorted({d.language for d in documents})}")
+    except Exception as exc:
+        logger.error(
+            "Failed to load real ai4bharat/MSMARCO-XI data (%s) -- "
+            "FALLING BACK TO SYNTHETIC DATA. These results are NOT the real dataset.",
+            exc, exc_info=True,
+        )
+        print(f"!!! REAL DATA LOAD FAILED ({exc}) -- falling back to synthetic. "
+              f"These numbers are NOT from the real dataset. !!!")
+        data_source = "synthetic_fallback"
+        documents = load_synthetic(docs_per_language=150)
     print(f"Loaded {len(documents)} documents across languages: {SUPPORTED_LANGUAGES}")
 
     print("\n=== Building chunking strategies + FAISS indexes ===")
@@ -171,6 +209,7 @@ def run():
     summary_path = os.path.join(RESULTS_DIR, "latency_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump({
+            "data_source": data_source,
             "build_reports": [asdict(r) for r in build_reports],
             "latency_summary": summary,
             "guardrail": {

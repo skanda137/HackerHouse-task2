@@ -1,15 +1,21 @@
 import numpy as np
-from typing import Dict, List
-from collections import deque
+from typing import Dict, List, Optional
+from collections import deque, Counter
 from app.schemas import StageLatencyBreakdown
 
 
 class TelemetryTracker:
     def __init__(self, window_size: int = 1000):
         self.history: deque = deque(maxlen=window_size)
+        self.status_counts: Counter = Counter()
 
-    def record(self, latencies: StageLatencyBreakdown):
+    def record(self, latencies: StageLatencyBreakdown, status: Optional[str] = None):
         self.history.append(latencies.model_dump())
+        if status:
+            self.status_counts[status] += 1
+
+    def get_status_counts(self) -> Dict[str, int]:
+        return dict(self.status_counts)
 
     def get_percentiles(self) -> Dict[str, Dict[str, float]]:
         if not self.history:

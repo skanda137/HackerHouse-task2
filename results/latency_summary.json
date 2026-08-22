@@ -1,10 +1,11 @@
 {
+  "data_source": "real:ai4bharat/MSMARCO-XI:validation",
   "build_reports": [
     {
       "strategy": "fixed_size",
-      "n_documents": 600,
-      "n_chunks": 1210,
-      "build_ms": 516.6226029999734,
+      "n_documents": 1600,
+      "n_chunks": 3289,
+      "build_ms": 1655.3914999822155,
       "languages": [
         "bn",
         "hi",
@@ -14,9 +15,9 @@
     },
     {
       "strategy": "semantic_sentence_boundary",
-      "n_documents": 600,
-      "n_chunks": 937,
-      "build_ms": 207.47637099998428,
+      "n_documents": 1600,
+      "n_chunks": 2360,
+      "build_ms": 1251.1775000020862,
       "languages": [
         "bn",
         "hi",
@@ -26,9 +27,9 @@
     },
     {
       "strategy": "metadata_aware",
-      "n_documents": 600,
-      "n_chunks": 907,
-      "build_ms": 212.16268099999525,
+      "n_documents": 1600,
+      "n_chunks": 2173,
+      "build_ms": 1279.1579000186175,
       "languages": [
         "bn",
         "hi",
@@ -40,26 +41,26 @@
   "latency_summary": {
     "fixed_size": {
       "n_queries": 248,
-      "p50_ms": 1.3359,
-      "p70_ms": 1.3759,
-      "p100_ms_max": 1.7343,
-      "mean_ms": 1.3516,
+      "p50_ms": 34.7021,
+      "p70_ms": 36.5723,
+      "p100_ms_max": 49.0154,
+      "mean_ms": 30.7056,
       "pct_under_200ms": 100.0
     },
     "semantic_sentence_boundary": {
       "n_queries": 248,
-      "p50_ms": 1.1386,
-      "p70_ms": 1.168,
-      "p100_ms_max": 2.4871,
-      "mean_ms": 1.1537,
+      "p50_ms": 25.3694,
+      "p70_ms": 26.9603,
+      "p100_ms_max": 42.8353,
+      "mean_ms": 22.7822,
       "pct_under_200ms": 100.0
     },
     "metadata_aware": {
       "n_queries": 248,
-      "p50_ms": 1.1144,
-      "p70_ms": 1.1435,
-      "p100_ms_max": 1.4471,
-      "mean_ms": 1.1307,
+      "p50_ms": 23.4797,
+      "p70_ms": 25.3388,
+      "p100_ms_max": 32.9426,
+      "mean_ms": 20.9621,
       "pct_under_200ms": 100.0
     }
   },
@@ -67,8 +68,8 @@
     "off_topic_total": 24,
     "off_topic_correctly_rejected": 24,
     "grounded_total": 720,
-    "grounded_correctly_answered": 720
+    "grounded_correctly_answered": 696
   },
   "total_queries_run": 744,
-  "wall_clock_seconds": 0.923
+  "wall_clock_seconds": 18.505
 }

@@ -32,6 +32,8 @@ class PipelineOutput(BaseModel):
     answer: str
     is_grounded: bool
     confidence_score: float
-    status: Literal["success", "fallback_no_context", "fallback_ungrounded", "error"]
+    status: Literal[
+        "success", "fallback_no_context", "fallback_ungrounded", "error", "fallback_generation_error"
+    ]
     latencies: StageLatencyBreakdown
     used_chunks: List[str] = Field(default_factory=list)

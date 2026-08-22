@@ -1,4 +1,5 @@
 import json
+import logging
 import uvicorn
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
@@ -9,11 +10,28 @@ from app.generator import GenerationHarness
 from app.analytics import telemetry
 from pipeline import RetrievalPipeline
 from app.schemas import RetrievedChunk, PipelineInput
-from data.load_msmarco_xi import load_synthetic
+from data.load_msmarco_xi import load_real, load_synthetic
 from embeddings.embedder import TfidfEmbedder
 from dotenv import load_dotenv; load_dotenv()
+
+logger = logging.getLogger("main")
+
 retrieval_pipeline = RetrievalPipeline(embedder=TfidfEmbedder())
-_startup_docs = load_synthetic(docs_per_language=150)
+try:
+    _startup_docs = load_real(max_docs_per_language=400)
+    if not _startup_docs:
+        raise RuntimeError("load_real() returned zero documents")
+    logger.warning(
+        "STARTUP: loaded REAL ai4bharat/MSMARCO-XI data (validation split) -- %d documents across %s",
+        len(_startup_docs), sorted({d.language for d in _startup_docs}),
+    )
+except Exception as exc:
+    logger.error(
+        "STARTUP: FAILED to load real ai4bharat/MSMARCO-XI data (%s) -- "
+        "FALLING BACK TO SYNTHETIC DATA. This is NOT the real dataset.",
+        exc, exc_info=True,
+    )
+    _startup_docs = load_synthetic(docs_per_language=150)
 retrieval_pipeline.build_all(_startup_docs)
 
 app = FastAPI(
@@ -31,6 +49,18 @@ app.add_middleware(
 
 harness = GenerationHarness()
 
+# Demo-reliability cache: keyed on normalized (query, language), only ever
+# populated with a response that was actually produced by a real successful
+# call (status == "success") -- never precomputed or faked. Exists so a
+# query rehearsed once doesn't re-risk a live timeout/rate-limit hit on the
+# exact same question during the actual demo. Deliberately NOT recorded into
+# telemetry on a hit, so it can't distort /v1/analytics latency reporting.
+_demo_response_cache: dict[tuple[str, str], PipelineOutput] = {}
+
+
+def _demo_cache_key(query: str, language: str) -> tuple[str, str]:
+    return (query.strip().lower(), language)
+
 
 @app.get("/health")
 async def health():
@@ -43,6 +73,12 @@ class UserQueryRequest(BaseModel):
 
 @app.post("/v1/chat", response_model=PipelineOutput)
 async def chat_end_to_end(payload: UserQueryRequest):
+    cache_key = _demo_cache_key(payload.query, payload.query_language)
+    cached = _demo_response_cache.get(cache_key)
+    if cached is not None:
+        logger.info("demo cache hit: query=%r lang=%s", payload.query, payload.query_language)
+        return cached
+
     outcome = retrieval_pipeline.query(
         text=payload.query,
         language=payload.query_language
@@ -68,7 +104,9 @@ async def chat_end_to_end(payload: UserQueryRequest):
     )
 
     result = await harness.execute_unary(pipeline_input)
-    telemetry.record(result.latencies)
+    telemetry.record(result.latencies, status=result.status)
+    if result.status == "success":
+        _demo_response_cache[cache_key] = result
     return result
     
 @app.post("/v1/process_turn", response_model=PipelineOutput)
@@ -78,7 +116,7 @@ async def process_turn(payload: PipelineInput):
     """
     try:
         result = await harness.execute_unary(payload)
-        telemetry.record(result.latencies)
+        telemetry.record(result.latencies, status=result.status)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -121,9 +159,15 @@ async def stream_turn(payload: PipelineInput):
 @app.get("/v1/analytics")
 async def get_analytics():
     """
-    Returns live P50/P70/P90/P100 latency percentiles across all recorded turns.
+    Returns live P50/P70/P90/P100 latency percentiles across all recorded
+    turns, plus a count of outcomes by status (success / guardrail declines /
+    generation failures) so failure modes are visible as their own category,
+    not folded into a single crash count.
     """
-    return telemetry.get_percentiles()
+    return {
+        "latency_percentiles": telemetry.get_percentiles(),
+        "status_counts": telemetry.get_status_counts(),
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, workers=2)

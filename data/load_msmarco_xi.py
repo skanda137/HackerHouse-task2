@@ -1,9 +1,23 @@
 """
 Loader for ai4bharat/MSMARCO-XI.
 
-The real dataset is split into per-language configs (hi, ta, te, bn, ...)
-rather than one blob -- `load_real()` reflects that directly, pulling one
-config at a time via the HuggingFace `datasets` library.
+Verified against the actual dataset on the HF Hub (2026-08-22), which does
+NOT match what this file originally assumed:
+
+- There is a single HF config ("default"), not one config per language.
+- Language is instead split across per-language parquet FILES, one per
+  split, named with 3-letter codes: train/{hintrain,tamtrain,bentrain,...}.parquet,
+  validation/{hinval,tamval,telval,benval,...}.parquet. Telugu has NO train
+  file at all -- validation only.
+- Each row is a QA example, not a bare passage: `passages.Translated_passages`
+  is a list of ~10 candidate passages per query, with a parallel
+  `passages.is_selected` 0/1 list marking the gold-relevant one(s). A
+  realistic retrieval corpus is built from all of them (selected +
+  distractors), not just the gold passage.
+- `train/*.parquet` files are ~3.7GB each (~80GB across all languages);
+  `validation/*.parquet` files are ~460-490MB each. `load_real()` defaults
+  to `validation` so a from-scratch run is tractable, and because it's the
+  only split where all four supported languages exist.
 
 `load_synthetic()` is an offline stand-in with the *same shape* (doc_id,
 text, language, source) used for local dev, tests, and this repo's own
@@ -21,38 +35,63 @@ from chunking.base import Document
 
 SUPPORTED_LANGUAGES = ["hi", "ta", "te", "bn"]
 
+# Our 2-letter codes -> the dataset's 3-letter file-name prefixes.
+_LANG_FILE_PREFIX = {"hi": "hin", "ta": "tam", "te": "tel", "bn": "ben"}
 
-def load_real(languages: List[str] = None, split: str = "train",
+
+def load_real(languages: List[str] = None, split: str = "validation",
               max_docs_per_language: int = 2000) -> List[Document]:
     """
     Real loader. Requires: pip install datasets, and network access to
-    huggingface.co on first run (weights/data are then cached locally).
+    huggingface.co (files are cached locally after first download).
 
-        from datasets import load_dataset
-        ds = load_dataset("ai4bharat/MSMARCO-XI", lang, split=split)
-
-    Left as the documented, ready-to-run path for judges / graders running
-    this outside a network-restricted sandbox.
+    Fetches each language's parquet file directly by URL via the generic
+    "parquet" builder rather than `load_dataset("ai4bharat/MSMARCO-XI", ...)`,
+    which would otherwise pull every language's file to resolve the dataset
+    (there is no per-language HF config to select with).
     """
     from datasets import load_dataset  # local import: only required for this path
 
     languages = languages or SUPPORTED_LANGUAGES
+    file_suffix = "train" if split == "train" else "val"
     docs: List[Document] = []
+
     for lang in languages:
-        ds = load_dataset("ai4bharat/MSMARCO-XI", lang, split=split)
-        for i, row in enumerate(ds):
-            if i >= max_docs_per_language:
+        prefix = _LANG_FILE_PREFIX.get(lang)
+        if prefix is None:
+            raise ValueError(f"no known ai4bharat/MSMARCO-XI file for language '{lang}'")
+
+        url = (f"https://huggingface.co/datasets/ai4bharat/MSMARCO-XI/resolve/main/"
+               f"{split}/{prefix}{file_suffix}.parquet")
+        ds = load_dataset("parquet", data_files=url, split="train")
+
+        count = 0
+        for row in ds:
+            passages = row.get("passages") or {}
+            translated = passages.get("Translated_passages") or []
+            selected = passages.get("is_selected") or []
+            qid = row.get("query_id")
+
+            for i, text in enumerate(translated):
+                if not text or not text.strip():
+                    continue
+                docs.append(Document(
+                    doc_id=f"{lang}-{split}-{qid}-{i}",
+                    text=text,
+                    language=lang,
+                    source=f"msmarco-xi/{lang}/{split}",
+                    extra={
+                        "query_id": qid,
+                        "is_selected": bool(selected[i]) if i < len(selected) else False,
+                        "query": row.get("query"),
+                    },
+                ))
+                count += 1
+                if count >= max_docs_per_language:
+                    break
+            if count >= max_docs_per_language:
                 break
-            text = row.get("passage") or row.get("text") or row.get("context") or ""
-            if not text:
-                continue
-            docs.append(Document(
-                doc_id=f"{lang}-{split}-{i}",
-                text=text,
-                language=lang,
-                source=f"msmarco-xi/{lang}/{split}",
-                extra={"raw_index": i},
-            ))
+
     return docs
 
 

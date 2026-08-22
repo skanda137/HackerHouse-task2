@@ -16,9 +16,14 @@ console.log("Browser WebSocket server: ws://localhost:8080");
 server.on("connection", (browserWs) => {
     console.log("Browser connected.");
 
+    // auto-detect: the corpus is Hindi/Tamil/Telugu/Bengali-only, so pinning
+    // a single language (previously hardcoded en-IN) meant every real query
+    // retrieved nothing. Sarvam's saaras:v3-realtime supports `auto` and
+    // returns a `language` field on transcript.final when it's used --
+    // App.jsx already reads and forwards that field to /v1/chat.
     const sarvamUrl =
         "wss://api.sarvam.ai/speech-to-text-realtime/ws" +
-        "?language_code=en-IN" +
+        "?language_code=auto" +
         "&sample_rate=16000";
 
     const sarvamWs = new WebSocket(sarvamUrl, {

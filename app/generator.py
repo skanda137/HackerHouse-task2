@@ -1,10 +1,13 @@
 import os
 import time
 import asyncio
+import logging
 from typing import AsyncGenerator, Tuple, List
 from openai import AsyncOpenAI
 from app.schemas import PipelineInput, PipelineOutput, StageLatencyBreakdown
 from app.grounding import LightweightGroundingEngine
+
+logger = logging.getLogger("generator")
 
 # Fallback templates in supported Indic languages
 FALLBACK_RESPONSES = {
@@ -22,10 +25,25 @@ class GenerationHarness:
         self.api_key = os.getenv("LLM_API_KEY", "your-api-key")
         self.base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
         self.model = os.getenv("LLM_MODEL_NAME", "llama-3.1-8b-instant")
-        
+
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         self.grounding_engine = LightweightGroundingEngine(token_overlap_threshold=0.60)
         self.min_retrieval_score_threshold = 0.45
+
+        # Minimum spacing between outbound LLM calls. Doesn't remove the
+        # provider's TPM cap, just reduces the odds of tripping it during a
+        # live demo/judge session where requests can otherwise land back-to-back.
+        self._min_call_interval_s = float(os.getenv("LLM_MIN_CALL_INTERVAL_S", "4.0"))
+        self._throttle_lock = asyncio.Lock()
+        self._last_call_monotonic = 0.0
+
+    async def _throttle(self):
+        async with self._throttle_lock:
+            now = time.monotonic()
+            wait_s = self._min_call_interval_s - (now - self._last_call_monotonic)
+            if wait_s > 0:
+                await asyncio.sleep(wait_s)
+            self._last_call_monotonic = time.monotonic()
 
     def _build_prompt(self, query: str, chunks: list, language: str) -> List[dict]:
         context_text = "\n---\n".join([f"Passage [{i+1}]: {c.text}" for i, c in enumerate(chunks)])
@@ -74,6 +92,7 @@ class GenerationHarness:
         ttft_ms = 0.0
 
         try:
+            await self._throttle()
             # Enforce strict 1.8s timeout to prevent hanging the voice interface
             async with asyncio.timeout(1.8):
                 stream = await self.client.chat.completions.create(
@@ -103,6 +122,29 @@ class GenerationHarness:
                     retrieval_ms=payload.retrieval_latency_ms,
                     total_generation_ms=1800.0,
                     total_e2e_ms=payload.stt_latency_ms + payload.retrieval_latency_ms + 1800.0
+                )
+            )
+        except Exception as exc:
+            # Any other LLM-call failure (bad model name, auth expiry, rate
+            # limit, malformed response, provider outage, ...). The whole
+            # point of the guardrail requirement is that a failure here
+            # degrades to a structured decline, not a raw 500 -- the client
+            # must never see an unhandled crash for something as ordinary as
+            # a provider hiccup. Full exception logged server-side; the
+            # client gets the same shape fallback_no_context already uses,
+            # tagged with its own status so it's countable separately.
+            logger.error("LLM generation call failed: %s", exc, exc_info=True)
+            elapsed_ms = (time.perf_counter() - start_gen) * 1000.0
+            return PipelineOutput(
+                answer=self._get_fallback(lang),
+                is_grounded=False,
+                confidence_score=0.0,
+                status="fallback_generation_error",
+                latencies=StageLatencyBreakdown(
+                    stt_ms=payload.stt_latency_ms,
+                    retrieval_ms=payload.retrieval_latency_ms,
+                    total_generation_ms=round(elapsed_ms, 2),
+                    total_e2e_ms=round(payload.stt_latency_ms + payload.retrieval_latency_ms + elapsed_ms, 2)
                 )
             )
 

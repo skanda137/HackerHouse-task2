@@ -1,0 +1,162 @@
+[
+  {
+    "lang": "hi",
+    "kind": "grounded",
+    "query": "स्टबहब टोल फ्री नंबर",
+    "http_status": 200,
+    "pipeline_status": "success",
+    "confidence": 0.875,
+    "answer": "स्टबहब का टोल‑फ्री नंबर 1‑866‑788‑2482 है।",
+    "e2e_ms": 1173.93
+  },
+  {
+    "lang": "hi",
+    "kind": "grounded",
+    "query": "बाज़ कितनी तेजी से यात्रा करता है",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "मुझे प्रदान किए गए संदर्भ में इस प्रश्न का सटीक उत्तर नहीं मिला।",
+    "e2e_ms": 287.7921999897808
+  },
+  {
+    "lang": "hi",
+    "kind": "grounded",
+    "query": "रेचल कार्सन ने क्यों एक दायित्व बर्दाश्त करने के लिए लिखा",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "मुझे प्रदान किए गए संदर्भ में इस प्रश्न का सटीक उत्तर नहीं मिला।",
+    "e2e_ms": 285.3918000473641
+  },
+  {
+    "lang": "hi",
+    "kind": "off_topic",
+    "query": "पिज़्ज़ा के लिए सबसे अच्छा टॉपिंग कौन सा है?",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "मुझे प्रदान किए गए संदर्भ में इस प्रश्न का सटीक उत्तर नहीं मिला।",
+    "e2e_ms": 283.78679999150336
+  },
+  {
+    "lang": "ta",
+    "kind": "grounded",
+    "query": "ஸ்டப்ஹப் டோல் இலவச எண்",
+    "http_status": 200,
+    "pipeline_status": "success",
+    "confidence": 0.8571,
+    "answer": "ஸ்டப்ஹப் டோல் இலவச எண்: 1‑866‑788‑2482",
+    "e2e_ms": 1359.01
+  },
+  {
+    "lang": "ta",
+    "kind": "grounded",
+    "query": "கழுகு எவ்வளவு வேகமாக பயணிக்கிறது?",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "வழங்கப்பட்ட சூழலில் இந்த கேள்விக்கான சரியான பதில் கிடைக்கவில்லை.",
+    "e2e_ms": 286.51430003810674
+  },
+  {
+    "lang": "ta",
+    "kind": "grounded",
+    "query": "நேர்மை அல்லது நேர்மையின் வரையறை",
+    "http_status": 200,
+    "pipeline_status": "error",
+    "confidence": 0.0,
+    "answer": "வழங்கப்பட்ட சூழலில் இந்த கேள்விக்கான சரியான பதில் கிடைக்கவில்லை.",
+    "e2e_ms": 2085.565299971495
+  },
+  {
+    "lang": "ta",
+    "kind": "off_topic",
+    "query": "பீட்சாவிற்கு சிறந்த டாப்பிங் எது?",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "வழங்கப்பட்ட சூழலில் இந்த கேள்விக்கான சரியான பதில் கிடைக்கவில்லை.",
+    "e2e_ms": 282.6322000473738
+  },
+  {
+    "lang": "te",
+    "kind": "grounded",
+    "query": "స్టబ్‌హబ్ టోల్ ఉచిత నంబర్",
+    "http_status": 200,
+    "pipeline_status": "success",
+    "confidence": 0.8,
+    "answer": "StubHub టోల్‑ఫ్రీ నంబర్లు: +1 (860) 766‑2000, 866‑788‑2482.",
+    "e2e_ms": 1898.71
+  },
+  {
+    "lang": "te",
+    "kind": "grounded",
+    "query": "గద్దలు ఎంత వేగంగా ప్రయాణిస్తాయో",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "అందించిన సందర్భంలో ఈ ప్రశ్నకు ఖచ్చితమైన సమాధానం దొరకలేదు.",
+    "e2e_ms": 291.94600001210347
+  },
+  {
+    "lang": "te",
+    "kind": "grounded",
+    "query": "బార్టర్ సిస్టమ్ మరియు దాని సమస్యలు ఏమిటి",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "అందించిన సందర్భంలో ఈ ప్రశ్నకు ఖచ్చితమైన సమాధానం దొరకలేదు.",
+    "e2e_ms": 290.04739999072626
+  },
+  {
+    "lang": "te",
+    "kind": "off_topic",
+    "query": "పిజ్జాకు ఉత్తమమైన టాపింగ్ ఏది?",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "అందించిన సందర్భంలో ఈ ప్రశ్నకు ఖచ్చితమైన సమాధానం దొరకలేదు.",
+    "e2e_ms": 284.49509997153655
+  },
+  {
+    "lang": "bn",
+    "kind": "grounded",
+    "query": "স্টাবহাব টোল ফ্রি নম্বর",
+    "http_status": 200,
+    "pipeline_status": "success",
+    "confidence": 0.875,
+    "answer": "স্টাবহাব টোল‑ফ্রি নম্বর হল ১‑৮৬৬‑৭৮৮‑২৪৮২।",
+    "e2e_ms": 1467.02
+  },
+  {
+    "lang": "bn",
+    "kind": "grounded",
+    "query": "একটি ঈগল কত দ্রুত ভ্রমণ করে।",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "প্রদত্ত প্রসঙ্গে এই প্রশ্নের সঠিক উত্তর পাওয়া যায়নি।",
+    "e2e_ms": 284.4640999683179
+  },
+  {
+    "lang": "bn",
+    "kind": "grounded",
+    "query": "সততা বা সততার সংজ্ঞা",
+    "http_status": 200,
+    "pipeline_status": "success",
+    "confidence": 0.6364,
+    "answer": "সততা হল তথ্যের প্রতি অনুগত, স্পষ্টতা, সত্যবাদিতা, নির্ভুলতা এবং নৈতিক মূল্যবোধের সামঞ্জস্য।",
+    "e2e_ms": 2006.31
+  },
+  {
+    "lang": "bn",
+    "kind": "off_topic",
+    "query": "পিৎজার জন্য সেরা টপিং কোনটি?",
+    "http_status": 200,
+    "pipeline_status": "fallback_no_context",
+    "confidence": 0.0,
+    "answer": "প্রদত্ত প্রসঙ্গে এই প্রশ্নের সঠিক উত্তর পাওয়া যায়নি।",
+    "e2e_ms": 288.98400004254654
+  }
+]

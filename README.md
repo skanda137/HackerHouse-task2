@@ -80,12 +80,15 @@ this task's realistic scale).
   word n-grams, because word tokenization differs a lot across
   Devanagari/Tamil/Telugu/Bengali scripts). Zero downloads, runs anywhere.
 
-**Why the benchmark numbers below use TF-IDF, not the transformer:** this
-was built and tested in a network-restricted sandbox that can't reach
-`huggingface.co`. The architecture, retry/harness logic, index, guardrail,
-and latency-measurement code are all identical either way — swapping
-embedders is a one-line change (`RetrievalPipeline(embedder=...)`). See
-[Switching to the real dataset + production embedder](#switching-to-the-real-dataset--production-embedder) below.
+**Why the benchmark numbers below use TF-IDF, not the transformer:** the
+architecture, retry/harness logic, index, guardrail, and latency-measurement
+code are all identical either way — swapping embedders is a one-line change
+(`RetrievalPipeline(embedder=...)`). TF-IDF is what's actually deployed
+right now; `SentenceTransformerEmbedder` is implemented and importable but
+hasn't been swapped in yet (network access for the model download and time
+were the constraints, not the code — see
+[Switching to the production embedder](#switching-to-the-production-embedder)
+below). The dataset itself, however, **is** the real one — see below.
 
 ## Harness (requirement #5)
 
@@ -116,52 +119,84 @@ structurally harder to produce, not just discouraged by a prompt.
 
 ## Latency results (requirement #4)
 
-Measured with `benchmark/run_benchmark.py`: **248 queries** (240 pulled
-verbatim from corpus sentences across all 4 languages — expected
-answerable — + 8 off-topic probes, replicated across all 3 strategies =
-**744 total timed retrievals**), after a 5-query warm-up excluded from the
-reported numbers. Corpus: 600 synthetic MSMARCO-XI-shaped documents
-(150/language), producing 907–1,210 chunks depending on strategy.
+Measured with `benchmark/run_benchmark.py` against the **real
+`ai4bharat/MSMARCO-XI` dataset** (validation split, loaded via
+`load_real()` — not synthetic data): **248 queries** (240 real MS MARCO
+queries, drawn from each document's own gold-labeled `query` field across
+all 4 languages — expected answerable — + 8 off-topic probes, replicated
+across all 3 strategies = **744 total timed retrievals**), after a 5-query
+warm-up excluded from the reported numbers. Corpus: 1,600 real documents
+(400/language), producing 2,173–3,289 chunks depending on strategy.
 
 | Strategy | n | P50 | P70 | P100 (max) | mean | % under 200ms |
 |---|---|---|---|---|---|---|
-| `fixed_size` | 248 | **1.310 ms** | **1.334 ms** | 1.585 ms | 1.312 ms | 100% |
-| `semantic_sentence_boundary` | 248 | **1.119 ms** | **1.142 ms** | 2.503 ms | 1.129 ms | 100% |
-| `metadata_aware` (default) | 248 | **1.098 ms** | **1.116 ms** | 1.439 ms | 1.100 ms | 100% |
+| `fixed_size` | 248 | **34.70 ms** | **36.57 ms** | 49.02 ms | 30.71 ms | 100% |
+| `semantic_sentence_boundary` | 248 | **25.37 ms** | **26.96 ms** | 42.84 ms | 22.78 ms | 100% |
+| `metadata_aware` (default) | 248 | **23.48 ms** | **25.34 ms** | 32.94 ms | 20.96 ms | 100% |
 
-Every strategy clears the 200ms budget with roughly **two orders of
-magnitude of headroom** — even the worst single observed query (P100) is
-under 2.5ms. That headroom is deliberate: it's there to absorb the extra
-cost of the production embedder (a transformer forward pass is slower than
-TF-IDF) plus whatever latency speech-to-text and generation add elsewhere
-in the pipeline, while the *whole system* still targets sub-200ms.
+Every strategy clears the 200ms retrieval budget with room to spare — real
+retrieval against the real (larger, real-text) index costs low tens of
+milliseconds, not the sub-2ms seen on the earlier synthetic corpus, but
+still nowhere near the 200ms ceiling. These retrieval-only numbers are
+consistent with what the live `/v1/analytics` endpoint reports for
+`retrieval_ms` under real HTTP traffic. **This is the part of the pipeline
+fully in our control; it is not where the 200ms target is actually spent —
+see [Known limitations](#known-limitations) below for the honest number on
+the full pipeline.**
 
 Raw per-query data: `results/latency_results.csv`
-Machine-readable summary: `results/latency_summary.json`
+Machine-readable summary: `results/latency_summary.json` (`data_source` field
+records whether a given run used real or synthetic data)
 Chart: `results/latency_chart.png`
 
 Guardrail sanity check from the same run: **24/24 off-topic probes
-correctly rejected**, **720/720 grounded queries correctly answered**
-(100% each, across all 3 strategies).
+correctly rejected**, **696/720 grounded queries correctly answered**
+(96.7%, across all 3 strategies) — this measures the retrieval guardrail's
+own `0.28` similarity threshold, which is more lenient than the live
+`/v1/chat` pipeline's full funnel (retrieval guardrail → harness's stricter
+`0.45` re-check → LLM generation → post-generation grounding check). See
+[Known limitations](#known-limitations) for why the live success rate is
+noticeably lower than 96.7%.
 
-### An honest limitation, on display in `demo.py`
+## Known limitations
 
-Run `python3 demo.py` and one of the four example queries — a Tamil
-question about the Himalayas, phrased differently from the passage's
-wording — gets **correctly declined** by the guardrail (score 0.247, just
-under the 0.28 threshold), even though a relevant passage exists in the
-corpus. That's TF-IDF's char n-gram matching being weaker than real
-semantic embeddings at handling morphological variation in agglutinative
-languages like Tamil — exactly the kind of gap `SentenceTransformerEmbedder`
-closes. Left in deliberately rather than cherry-picking only the queries
-that work: it shows the guardrail doing its job (declining on a genuinely
-marginal match) and gives an honest, reproducible reason the production
-embedder matters, not just an assertion that it would.
+Stated plainly, not buried in commit messages:
 
-## Switching to the real dataset + production embedder
+- **Full end-to-end latency does not meet the 200ms target, and can't with
+  the current architecture.** Live-endpoint batch testing across 32 real
+  queries (`/v1/analytics`, `total_e2e_ms`) measured **P50 1328ms / P70
+  1697ms / P100 2094ms** — dominated almost entirely by the external LLM API
+  call (`total_generation_ms` alone: P50 1422ms). This is architecturally
+  external to this codebase: no amount of retrieval optimization closes a
+  gap that's coming from a third-party API round-trip. **Retrieval — the
+  component actually in our control — meets the 200ms target with a wide
+  margin**, at P50 23-35ms / P100 33-49ms even against the real MS MARCO
+  index (see the table above).
+- **Roughly half of real corpus queries hit the grounding guardrail's
+  `fallback_no_context` / `fallback_ungrounded` state**, not because
+  retrieval or the guardrail are broken, but because MS MARCO's queries are
+  *intentionally* paraphrased away from their answer passage's wording —
+  that lexical gap is the dataset's whole point, and a purely lexical
+  TF-IDF embedder feels it more than a semantic one would. The guardrail is
+  correctly detecting "not confidently grounded" here, not misfiring. A
+  demo-safety preflight script (`scripts/preflight_demo_queries.py`) exists
+  specifically to pick queries that are confirmed to clear the full
+  pipeline live, rather than assuming any gold-labeled MS MARCO query will.
+- **No real Sarvam STT session has been run in this environment** — no
+  `SARVAM_API_KEY` was available here. `voice/node/server.js` (the real
+  bridge) and `App.jsx` are both implemented and were proven correct against
+  a mocked STT bridge (`voice/node/mock-stt-bridge.test.js`) that replays
+  Sarvam's exact documented realtime message contract (`event`,
+  `text`, `language` fields). That is a verified integration against the
+  real contract, not a verified integration against the real service —
+  don't let the submission imply otherwise. Run it against a real key before
+  relying on it live.
 
-Everything below needs outbound network access (blocked in the sandbox
-this was built in) but is fully wired up and ready to run:
+## Switching to the production embedder
+
+Everything below needs outbound network access for the model download, but
+is fully wired up and ready to run (the dataset side of this no longer
+needs a swap — `app/main.py` already loads real data by default):
 
 ```bash
 pip install -r requirements.txt   # adds datasets + sentence-transformers
@@ -180,11 +215,10 @@ print(out.verdict.should_answer, out.verdict.top_score, out.total_ms)
 "
 ```
 
-Re-run `python3 -m benchmark.run_benchmark` after that swap (edit the two
-lines noted with `# offline synthetic` in `benchmark/run_benchmark.py` to
-call `load_real()` instead of `load_synthetic()`, and construct
-`RetrievalPipeline(embedder=SentenceTransformerEmbedder())`) to get final
-submission-ready P50/P70/P100 numbers against the real dataset.
+Re-run `python3 -m benchmark.run_benchmark` after that swap (it already uses
+`load_real()`; construct `RetrievalPipeline(embedder=SentenceTransformerEmbedder())`
+in place of the default `TfidfEmbedder()`) to get updated P50/P70/P100
+numbers with the production embedder instead of TF-IDF.
 
 ## Repo layout
 

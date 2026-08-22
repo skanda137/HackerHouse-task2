@@ -1,108 +1,276 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 
+const RAG_API_BASE = "http://localhost:8000";
+const STT_WS_URL = "ws://localhost:8080";
+// server.js hardcodes the Sarvam session to language_code=en-IN, so the
+// transcript handed to /v1/chat is always English.
+const QUERY_LANGUAGE = "en";
+
+const TTS_LANG_MAP = { hi: "hi-IN", ta: "ta-IN", te: "te-IN", bn: "bn-IN", en: "en-US" };
+const KNOWN_LANGUAGES = new Set(["hi", "ta", "te", "bn", "en"]);
+
+// Sarvam's realtime API only reports `language` on the transcript event when
+// the session is opened with language_code=auto (BCP-47 codes like "hi-IN").
+// server.js pins the session to en-IN, so this normally falls back to
+// QUERY_LANGUAGE -- kept so the frontend is correct if that's ever changed.
+function normalizeLanguage(rawLanguage) {
+  if (!rawLanguage) return null;
+  const code = rawLanguage.split("-")[0].toLowerCase();
+  return KNOWN_LANGUAGES.has(code) ? code : null;
+}
+
+function speak(text, lang) {
+  if (!text || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = TTS_LANG_MAP[lang] || "en-US";
+  window.speechSynthesis.speak(utterance);
+}
+
 function App() {
-  const [recording, setRecording] = useState(false);
+  // idle | listening | thinking | answer | guardrail | error
+  const [phase, setPhase] = useState("idle");
+  const [statusText, setStatusText] = useState("Ready");
   const [transcript, setTranscript] = useState("");
-  const [status, setStatus] = useState("Ready");
+  const [answer, setAnswer] = useState("");
+  const [confidence, setConfidence] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const wsRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const recordStartRef = useRef(0);
+  const submittedRef = useRef(false);
+  const phaseRef = useRef(phase);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  const stopMic = useCallback(() => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      const tracks = mediaRecorderRef.current.stream?.getTracks() || [];
+      tracks.forEach((track) => track.stop());
+      mediaRecorderRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }, []);
+
+  const askBackend = useCallback(async (query, sttLatencyMs, language) => {
+    setPhase("thinking");
+    setStatusText("Thinking...");
+    setAnswer("");
+    setConfidence(null);
+    setErrorMessage("");
+
+    try {
+      const res = await fetch(`${RAG_API_BASE}/v1/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          query_language: language,
+          stt_latency_ms: sttLatencyMs,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Backend returned ${res.status}: ${body}`);
+      }
+
+      const data = await res.json();
+
+      if (data.status === "success") {
+        setAnswer(data.answer);
+        setConfidence(data.confidence_score);
+        setPhase("answer");
+        setStatusText("Answered");
+        speak(data.answer, language);
+      } else if (data.status === "fallback_no_context" || data.status === "fallback_ungrounded") {
+        // Guardrail declining to answer -- a feature, not a failure.
+        setAnswer(data.answer);
+        setConfidence(data.confidence_score);
+        setPhase("guardrail");
+        setStatusText("Declined to answer");
+        speak(data.answer, language);
+      } else {
+        // status === "error": the harness itself failed (e.g. generation timeout).
+        setErrorMessage(data.answer || "The RAG service failed to generate a response.");
+        setPhase("error");
+        setStatusText("Generation failed");
+      }
+    } catch (err) {
+      console.error("RAG backend call failed:", err);
+      setErrorMessage(err.message || "Could not reach the RAG backend.");
+      setPhase("error");
+      setStatusText("Connection error");
+    }
+  }, []);
 
   const startRecording = async () => {
+    setPhase("listening");
+    setStatusText("Connecting...");
+    setTranscript("");
+    setAnswer("");
+    setErrorMessage("");
+    submittedRef.current = false;
+
     try {
-      setStatus("Connecting...");
-      
-      const ws = new WebSocket("ws://localhost:8080");
+      const ws = new WebSocket(STT_WS_URL);
+      wsRef.current = ws;
 
       ws.onopen = async () => {
-        setStatus("Listening...");
-        setRecording(true);
+        setStatusText("Listening...");
+        recordStartRef.current = performance.now();
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          mediaRecorderRef.current = recorder;
 
-        const recorder = new MediaRecorder(stream, {
-          mimeType: "audio/webm",
-        });
+          recorder.ondataavailable = async (event) => {
+            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+              const buffer = await event.data.arrayBuffer();
+              ws.send(buffer);
+            }
+          };
 
-        mediaRecorderRef.current = recorder;
-
-        recorder.ondataavailable = async (event) => {
-          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            const buffer = await event.data.arrayBuffer();
-            ws.send(buffer);
-          }
-        };
-
-        recorder.start(250);
+          recorder.start(250);
+        } catch (micErr) {
+          console.error(micErr);
+          setErrorMessage("Microphone access failed.");
+          setPhase("error");
+          setStatusText("Microphone error");
+          ws.close();
+        }
       };
 
       ws.onmessage = (event) => {
+        let data;
         try {
-          const data = JSON.parse(event.data);
-
-          if (data.transcript) {
-            setTranscript(data.transcript);
-          }
+          data = JSON.parse(event.data);
         } catch {
-          console.log("Server:", event.data);
+          console.log("Non-JSON message from STT bridge:", event.data);
+          return;
+        }
+
+        if (data.event === "transcript.partial") {
+          setTranscript(data.text || "");
+          return;
+        }
+
+        if (data.event === "transcript.final") {
+          const finalText = (data.text || "").trim();
+          const language = normalizeLanguage(data.language) || QUERY_LANGUAGE;
+          setTranscript(finalText);
+
+          if (finalText && !submittedRef.current) {
+            submittedRef.current = true;
+            const sttLatencyMs = performance.now() - recordStartRef.current;
+            stopMic();
+            askBackend(finalText, sttLatencyMs, language);
+          }
+          return;
+        }
+
+        // Defensive fallback in case the bridge is ever pointed at the
+        // legacy Sarvam schema ({type:"data", data:{transcript}}) instead
+        // of the realtime one this app targets.
+        if (data.transcript) {
+          setTranscript(data.transcript);
         }
       };
 
       ws.onerror = () => {
-        setStatus("Connection error");
-        setRecording(false);
+        console.error("STT WebSocket error");
+        if (!submittedRef.current) {
+          setErrorMessage("Lost connection to the speech-to-text bridge.");
+          setPhase("error");
+          setStatusText("Connection error");
+          stopMic();
+        }
       };
 
       ws.onclose = () => {
-        setRecording(false);
-        setStatus("Disconnected");
+        if (!submittedRef.current && phaseRef.current === "listening") {
+          setPhase("idle");
+          setStatusText("Ready");
+        }
       };
-
-      wsRef.current = ws;
     } catch (error) {
       console.error(error);
-      setStatus("Microphone error");
+      setErrorMessage("Could not open the speech-to-text connection.");
+      setPhase("error");
+      setStatusText("Connection error");
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-
-      const tracks =
-        mediaRecorderRef.current.stream?.getTracks() || [];
-
-      tracks.forEach((track) => track.stop());
-    }
-
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    setRecording(false);
-    setStatus("Ready");
+    stopMic();
+    setPhase("idle");
+    setStatusText("Ready");
   };
+
+  const recording = phase === "listening";
 
   return (
     <div className="app">
       <h1>Voice RAG</h1>
 
-      <p className="status">{status}</p>
+      <p className={`status status-${phase}`}>{statusText}</p>
 
       <button
-        className={recording ? "recording" : ""}
+        className={recording ? "mic-btn recording" : "mic-btn"}
         onClick={recording ? stopRecording : startRecording}
+        disabled={phase === "thinking"}
       >
         {recording ? "Stop Recording" : "🎙️ Start Speaking"}
       </button>
 
-      <div className="transcript">
+      <div className="transcript-box">
         <h2>Transcript</h2>
         <p>{transcript || "Your speech will appear here..."}</p>
       </div>
+
+      {phase === "thinking" && (
+        <div className="state-card thinking">
+          <span className="spinner" aria-hidden="true" />
+          <p>Retrieving context and generating an answer…</p>
+        </div>
+      )}
+
+      {phase === "answer" && (
+        <div className="state-card answer">
+          <h2>Answer</h2>
+          <p>{answer}</p>
+          {confidence !== null && (
+            <p className="meta">grounding confidence: {(confidence * 100).toFixed(0)}%</p>
+          )}
+        </div>
+      )}
+
+      {phase === "guardrail" && (
+        <div className="state-card guardrail">
+          <h2>⚠ No grounded answer</h2>
+          <p>{answer || "I don't have grounded information to answer that."}</p>
+          <p className="meta">
+            The retrieval system found no confident, grounded match for this question in the
+            dataset, so it's declining to answer rather than guessing.
+          </p>
+        </div>
+      )}
+
+      {phase === "error" && (
+        <div className="state-card error">
+          <h2>Something went wrong</h2>
+          <p>{errorMessage}</p>
+        </div>
+      )}
     </div>
   );
 }
