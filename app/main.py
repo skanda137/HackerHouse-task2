@@ -142,6 +142,7 @@ async def stream_turn(payload: PipelineInput):
                 messages=messages,
                 temperature=0.0,
                 max_tokens=60,
+                reasoning_effort="low",
                 stream=True
             )
             async for chunk in stream:

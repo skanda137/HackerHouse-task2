@@ -24,7 +24,7 @@ class GenerationHarness:
         # Using Groq / Together / DeepInfra for ultra-low Time-To-First-Token
         self.api_key = os.getenv("LLM_API_KEY", "your-api-key")
         self.base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
-        self.model = os.getenv("LLM_MODEL_NAME", "llama-3.1-8b-instant")
+        self.model = os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-20b")
 
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         self.grounding_engine = LightweightGroundingEngine(token_overlap_threshold=0.60)
@@ -100,6 +100,7 @@ class GenerationHarness:
                     messages=messages,
                     temperature=0.0,
                     max_tokens=60,
+                    reasoning_effort="low",
                     stream=True
                 )
                 
