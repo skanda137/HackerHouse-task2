@@ -3,8 +3,9 @@ import "./App.css";
 
 const RAG_API_BASE = "http://localhost:8000";
 const STT_WS_URL = "ws://localhost:8080";
-// server.js hardcodes the Sarvam session to language_code=en-IN, so the
-// transcript handed to /v1/chat is always English.
+// server.js opens the Sarvam session with language_code=auto and forwards
+// the detected `language` field on transcript.final; this is only the
+// fallback when that field is missing or unrecognized.
 const QUERY_LANGUAGE = "en";
 
 const TTS_LANG_MAP = { hi: "hi-IN", ta: "ta-IN", te: "te-IN", bn: "bn-IN", en: "en-US" };
@@ -38,7 +39,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const audioRef = useRef(null);
   const recordStartRef = useRef(0);
   const submittedRef = useRef(false);
   const phaseRef = useRef(phase);
@@ -48,11 +49,14 @@ function App() {
   }, [phase]);
 
   const stopMic = useCallback(() => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      const tracks = mediaRecorderRef.current.stream?.getTracks() || [];
-      tracks.forEach((track) => track.stop());
-      mediaRecorderRef.current = null;
+    if (audioRef.current) {
+      const { stream, audioContext, source, workletNode } = audioRef.current;
+      workletNode.port.onmessage = null;
+      workletNode.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      audioContext.close();
+      audioRef.current = null;
     }
     if (wsRef.current) {
       wsRef.current.close();
@@ -129,18 +133,30 @@ function App() {
         recordStartRef.current = performance.now();
 
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-          mediaRecorderRef.current = recorder;
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, sampleRate: 16000 },
+          });
 
-          recorder.ondataavailable = async (event) => {
-            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-              const buffer = await event.data.arrayBuffer();
-              ws.send(buffer);
+          // Sarvam's realtime STT expects raw linear16 (16-bit PCM) mono
+          // audio at 16kHz on the binary channel, not a container format.
+          // Requesting the AudioContext at 16kHz makes the browser resample
+          // the mic input for us; the worklet then converts Float32 -> Int16.
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          await audioContext.audioWorklet.addModule("/pcm-worklet.js");
+
+          const source = audioContext.createMediaStreamSource(stream);
+          const workletNode = new AudioWorkletNode(audioContext, "pcm-worklet-processor");
+
+          workletNode.port.onmessage = (event) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(event.data);
             }
           };
 
-          recorder.start(250);
+          source.connect(workletNode);
+          workletNode.connect(audioContext.destination);
+
+          audioRef.current = { stream, audioContext, source, workletNode };
         } catch (micErr) {
           console.error(micErr);
           setErrorMessage("Microphone access failed.");
@@ -161,6 +177,17 @@ function App() {
 
         if (data.event === "transcript.partial") {
           setTranscript(data.text || "");
+          return;
+        }
+
+        if (data.event === "error") {
+          console.error("STT bridge reported an error:", data.message);
+          if (!submittedRef.current) {
+            setErrorMessage(data.message || "The speech-to-text service failed.");
+            setPhase("error");
+            setStatusText("Speech-to-text error");
+            stopMic();
+          }
           return;
         }
 

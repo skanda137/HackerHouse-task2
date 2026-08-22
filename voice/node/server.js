@@ -72,6 +72,13 @@ server.on("connection", (browserWs) => {
 
     sarvamWs.on("error", (error) => {
         console.error("Sarvam error:", error.message);
+
+        if (browserWs.readyState === WebSocket.OPEN) {
+            browserWs.send(JSON.stringify({
+                event: "error",
+                message: `Speech-to-text upstream error: ${error.message}`
+            }));
+        }
     });
 
     browserWs.on("error", (error) => {
@@ -82,6 +89,17 @@ server.on("connection", (browserWs) => {
         console.log(
             `Sarvam connection closed: ${code} ${reason.toString()}`
         );
+
+        // 1000 is a normal closure (e.g. we closed it after the browser
+        // disconnected). Anything else means Sarvam dropped the session
+        // unexpectedly -- surface that instead of leaving the browser
+        // waiting forever for a transcript that will never arrive.
+        if (code !== 1000 && browserWs.readyState === WebSocket.OPEN) {
+            browserWs.send(JSON.stringify({
+                event: "error",
+                message: "Speech-to-text upstream closed unexpectedly."
+            }));
+        }
     });
 
     browserWs.on("close", () => {

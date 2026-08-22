@@ -8,6 +8,7 @@ export default defineConfig([
   globalIgnores(['dist']),
   {
     files: ['**/*.{js,jsx}'],
+    ignores: ['public/**'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
@@ -16,6 +17,15 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+  {
+    // AudioWorklet scripts run in AudioWorkletGlobalScope, not the browser
+    // or worker globals eslint knows about.
+    files: ['public/**/*.js'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: { ...globals.worker, AudioWorkletProcessor: 'readonly', registerProcessor: 'readonly' },
     },
   },
 ])
