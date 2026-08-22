@@ -38,31 +38,24 @@ server.on("connection", (browserWs) => {
     });
 
     // React -> Node -> Sarvam
-    browserWs.on("message", (data) => {
+    browserWs.on("message", (data, isBinary) => {
         if (sarvamWs.readyState !== WebSocket.OPEN) {
             return;
         }
 
+        if (isBinary) {
+            // Raw PCM16 (linear16) audio frame from the browser -- forward
+            // straight to Sarvam unmodified.
+            sarvamWs.send(data);
+            return;
+        }
+
         try {
-            // React sends JSON containing base64 PCM audio.
+            // Non-binary messages are control/JSON messages from the frontend.
             const clientMessage = JSON.parse(data.toString());
-
-            if (!clientMessage.audio) {
-                return;
-            }
-
-            const sarvamMessage = JSON.stringify({
-                audio: {
-                    data: clientMessage.audio,
-                    sample_rate: 16000,
-                    encoding: "audio/wav"
-                }
-            });
-
-            sarvamWs.send(sarvamMessage);
-
+            console.log("Browser control message:", clientMessage);
         } catch (error) {
-            console.error("Invalid browser audio message:", error.message);
+            console.error("Invalid browser control message:", error.message);
         }
     });
 
